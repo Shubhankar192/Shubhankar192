@@ -22,6 +22,19 @@ static bool getFileInfo(struct stat *buf, char *dirName, char *fileName)
     else
         return (false);
 }
+static char *constructPath(struct stat *buf, char *dirName, char *fileName)
+{
+    char *pathName = (char *)palloc(strlen(dirName) + 1 + strlen(fileName) + 1);
+
+    strcpy(pathName, dirName);
+    strcat(pathName, "/");
+    strcat(pathName, fileName);
+
+    if (stat(pathName, buf) == 0)
+        return pathName;
+    else
+        return NULL;
+}
 static char *text2cstring(text *src)
 {
     int len = VARSIZE(src) - VARHDRSZ;
@@ -31,6 +44,29 @@ static char *text2cstring(text *src)
     dst[len] = '\0';
 
     return (dst);
+}
+
+static int dir_size(char *path)
+{
+    struct stat buf;
+    DIR *dptr;
+    struct dirent *sdir;
+    int size = 0;
+    char str[100];
+
+    dptr = opendir(path);
+    while (sdir = readdir(dptr))
+    {
+        if (sdir->d_type != 4)
+        {
+            strcpy(str, path);
+            strcat(str, "/");
+            strcat(str, sdir->d_name);
+            stat(str, &buf);
+            size += buf.st_size;
+        }
+    }
+    return size;
 }
 
 PG_MODULE_MAGIC;
@@ -80,22 +116,41 @@ Datum fileinfo(PG_FUNCTION_ARGS)
         HeapTuple tuple;
 
         entry = ctx->dir_ctx_entries[srf->call_cntr];
-        values[0] = entry->d_name;
 
-        if (getFileInfo(&statBuf, ctx->dir_ctx_name, entry->d_name))
+        // if (entry->d_name[0] != '.')
+        // {
+        if (entry->d_type != 4)
         {
 
-            snprintf(fileSizeStr, sizeof(fileSizeStr), "%ld", statBuf.st_size);
+            values[0] = entry->d_name;
+            if (getFileInfo(&statBuf, ctx->dir_ctx_name, entry->d_name))
+            {
 
-            values[1] = fileSizeStr;
+                snprintf(fileSizeStr, sizeof(fileSizeStr), "%ld", statBuf.st_size);
+
+                values[1] = fileSizeStr;
+            }
         }
+
         else
         {
-            values[1] = NULL;
+
+            values[0] = entry->d_name;
+            char *pathdir = constructPath(&statBuf, ctx->dir_ctx_name, entry->d_name);
+            int sz = dir_size(pathdir);
+
+            snprintf(fileSizeStr, sizeof(fileSizeStr), "%d", sz);
+            values[1] = fileSizeStr;
         }
+        //}
+
+        // else
+        // {
+        //     values[0] = "";
+        //     values[1] = NULL;
+        // }
 
         tuple = BuildTupleFromCStrings(srf->attinmeta, values);
-
         SRF_RETURN_NEXT(srf, HeapTupleGetDatum(tuple));
     }
     else
